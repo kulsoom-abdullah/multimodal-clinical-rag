@@ -1,0 +1,17 @@
+# --- Core RAG & LangChain ---
+langchain
+langchain-core
+langchain-community
+langchain-text-splitters
+langchain-openai
+langchain-cohere  # For the re-ranker
+
+# --- Database & Retrieval ---
+chromadb
+rank_bm25         # For hybrid search
+sentence-transformers
+
+# --- Utilities ---
+openai            # For GPT-4o-mini
+backoff           # For robust ingestion
+python-dotenv
