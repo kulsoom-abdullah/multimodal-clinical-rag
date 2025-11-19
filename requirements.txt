@@ -1,17 +1,25 @@
+# --- App Framework ---
+streamlit
+
 # --- Core RAG & LangChain ---
 langchain
 langchain-core
 langchain-community
 langchain-text-splitters
 langchain-openai
-langchain-cohere  # For the re-ranker
+langchain-anthropic    # <--- CRITICAL ADDITION for ingest_data_advanced.py
+
+# --- Newer LangChain Integrations ---
+langchain-chroma       
+langchain-huggingface  
 
 # --- Database & Retrieval ---
 chromadb
-rank_bm25         # For hybrid search
-sentence-transformers
+rank_bm25              
+sentence-transformers  
 
 # --- Utilities ---
-openai            # For GPT-4o-mini
-backoff           # For robust ingestion
+openai                 
+backoff                
 python-dotenv
+watchdog

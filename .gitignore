@@ -1,0 +1,27 @@
+# Python Caches
+__pycache__/
+*.pyc
+
+# Environment & Secrets
+.env
+env/
+venv/
+
+# Data - CRITICAL IGNORES
+data/raw/
+data/chroma_db/
+data/docstore.pkl
+output/
+out.txt
+output.zip
+
+# NEW: Advanced Architecture Data (Add these!)
+data/chroma_db_advanced/
+data/docstore_advanced.pkl
+data/eval.jsonl
+
+# OS files
+.DS_Store
+
+# Docker
+.dockerignore
