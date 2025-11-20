@@ -23,6 +23,7 @@ from marker.converters.pdf import PdfConverter
 from marker.models import create_model_dict
 from marker.output import text_from_rendered
 
+
 def extract_trial_pdf_marker(pdf_path: Path, output_dir: Path, converter):
     """
     Extracts text/tables (as Markdown) and images from a PDF using Marker.
@@ -35,7 +36,7 @@ def extract_trial_pdf_marker(pdf_path: Path, output_dir: Path, converter):
     if marker_output_dir.exists():
         print(f"    - Output directory already exists, skipping.")
         return
-    
+
     marker_output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -49,29 +50,29 @@ def extract_trial_pdf_marker(pdf_path: Path, output_dir: Path, converter):
         md_path = marker_output_dir / f"{pdf_path.stem}.md"
         with open(md_path, "w", encoding="utf-8") as f:
             f.write(markdown_text)
-        
+
         # Correctly count tables from metadata
         table_count = 0
-        if 'page_stats' in rendered.metadata:
-            for page in rendered.metadata['page_stats']:
-                if 'block_counts' in page:
-                    for block_type, count in page['block_counts']:
+        if "page_stats" in rendered.metadata:
+            for page in rendered.metadata["page_stats"]:
+                if "block_counts" in page:
+                    for block_type, count in page["block_counts"]:
                         if block_type == "Table":
                             table_count += count
-        
+
         print(f"    ✅ Markdown saved: {md_path}")
         print(f"    \tWords: {len(markdown_text.split())}, Tables: {table_count}")
 
         # 4. Save the Images (with Heuristic Filtering)
         image_dir = marker_output_dir / "images"
         image_dir.mkdir(parents=True, exist_ok=True)
-        
+
         image_count = 0
         # 'images' is a DICTIONARY {name: image_object}
         for img_name, img_obj in images.items():
             try:
                 # img_obj is ALREADY a <PIL.Image.Image> object
-                
+
                 # --- Start Heuristic Filter ---
                 # Filter 1: Small images (icons/logos)
                 if img_obj.width < 100 or img_obj.height < 50:
@@ -80,16 +81,18 @@ def extract_trial_pdf_marker(pdf_path: Path, output_dir: Path, converter):
 
                 # Filter 2: Color simplicity (redactions/blank boxes)
                 # getcolors() returns None if color count > 256 (a complex image)
-                colors = img_obj.getcolors(maxcolors=256) 
-                
-                if colors: # It has 256 or fewer colors. Check if it's one solid color.
-                    colors.sort(reverse=True) # Sort by count
+                colors = img_obj.getcolors(maxcolors=256)
+
+                if colors:  # It has 256 or fewer colors. Check if it's one solid color.
+                    colors.sort(reverse=True)  # Sort by count
                     dominant_color_count = colors[0][0]
                     total_pixels = img_obj.width * img_obj.height
-                    
+
                     # Check if the most dominant color is > 75% of the image
                     if (dominant_color_count / total_pixels) > 0.75:
-                        print(f"    - ℹ️  Filtering junk image (color simplicity > 75%): {img_name}")
+                        print(
+                            f"    - ℹ️  Filtering junk image (color simplicity > 75%): {img_name}"
+                        )
                         continue
                 # --- End Heuristic Filter ---
 
@@ -97,19 +100,19 @@ def extract_trial_pdf_marker(pdf_path: Path, output_dir: Path, converter):
                 img_path = image_dir / img_name
                 img_obj.save(img_path)
                 image_count += 1
-                
+
             except Exception as img_e:
                 print(f"    - ⚠️  Skipping one image. Error saving {img_name}: {img_e}")
-        
-        if image_count > 0: # Use the count of *saved* images
+
+        if image_count > 0:  # Use the count of *saved* images
             print(f"    🖼️  Extracted {image_count} good images to: {image_dir}")
 
         # 5. BONUS: Save the REAL metadata
         meta_path = marker_output_dir / f"{pdf_path.stem}_pagemeta.json"
-        
+
         real_metadata = rendered.metadata
 
-        with open(meta_path, 'w', encoding='utf-8') as f:
+        with open(meta_path, "w", encoding="utf-8") as f:
             try:
                 json.dump(real_metadata, f, indent=2)
                 print(f"    ℹ️  Page metadata saved to: {meta_path}")
@@ -120,6 +123,7 @@ def extract_trial_pdf_marker(pdf_path: Path, output_dir: Path, converter):
     except Exception as e:
         print(f"    ❌ Error processing {pdf_path.name}: {e}")
         import traceback
+
         traceback.print_exc()
 
 
@@ -134,8 +138,11 @@ def main():
 
     print(f"🔬 Found {len(trial_folders)} trials. Starting Marker extraction...")
     print("Loading Marker models (first time will download models)...")
-    
-    warnings.filterwarnings("ignore", message="`TableRecEncoderDecoderModel` is not compatible with mps backend.")
+
+    warnings.filterwarnings(
+        "ignore",
+        message="`TableRecEncoderDecoderModel` is not compatible with mps backend.",
+    )
 
     # Initialize converter once (auto-detects MPS on M4 or NVIDIA GPU on RunPod)
     converter = PdfConverter(
@@ -148,9 +155,9 @@ def main():
         trial_id = trial_folder.name
         output_root = base_output_dir / trial_id
         output_root.mkdir(parents=True, exist_ok=True)
-        
+
         pdf_files = list(trial_folder.glob("*.pdf"))
-        
+
         if not pdf_files:
             print(f"--- Skipping Trial: {trial_id} (No PDF files found) ---")
             continue
@@ -160,7 +167,9 @@ def main():
         for pdf_path in pdf_files:
             extract_trial_pdf_marker(pdf_path, output_root, converter)
 
-        print(f"--- ✅ Finished trial: {trial_id}. Output saved to: {output_root} ---\n")
+        print(
+            f"--- ✅ Finished trial: {trial_id}. Output saved to: {output_root} ---\n"
+        )
 
     print(f"\n========================================================")
     print(f"📊 FINAL EXTRACTION SUMMARY: ALL {len(trial_folders)} TRIALS COMPLETE")

@@ -1,4 +1,3 @@
-
 # Agentic Multimodal Clinical Trial RAG
 
 ![Status](https://img.shields.io/badge/Status-Phase_3:_Advanced_Architecture-green) ![Python](https://img.shields.io/badge/Python-3.11-blue) ![Docker](https://img.shields.io/badge/Docker-Ready-blue)
@@ -13,12 +12,78 @@ This is an end-to-end **Agentic RAG system** designed to answer complex question
 
 Why build a complex RAG system instead of fine-tuning a model or using a long-context window?
 
-1.  **Data Velocity:** Clinical trials change constantly (amendments, new phases). A pre-trained model is frozen in time. RAG allows us to ingest a new protocol PDF today and query it immediately without expensive re-training.
+1.  **Data Velocity:** Clinical trials change constantly. A pre-trained model is frozen in time. RAG allows us to ingest a new protocol PDF today and query it immediately without expensive re-training.
 2.  **Hallucinations vs. Grounding:** In the medical domain, "guessing" is unacceptable. This system forces the LLM to answer *only* based on retrieved evidence, providing strict citations (e.g., `[Source: Prot_000/SAP]`) for auditability.
 3.  **The "Needle in the Haystack":** Clinical protocols are dense, 200+ page documents. Simple vector search often retrieves irrelevant sections. By using an **Agentic Router**, we distinguish between looking up a specific ID (Keyword Search) and understanding a mechanism (Semantic Search).
-4.  **Cost Efficiency:** Fine-tuning teaches "style," not "facts." RAG is the correct architectural pattern for knowledge-intensive tasks, costing a fraction of fine-tuning.
 
 ---
+
+## 🏗️ System Architecture
+
+This project uses a **Hybrid Model Strategy**, leveraging different LLMs for the tasks they excel at to optimize cost and performance.
+
+```mermaid
+graph LR
+    A[PDF Input] --> B[Marker Extraction]
+    B --> C{Ingestion Agents}
+    C -->|Metadata| D[Claude 4.5 Sonnet]
+    C -->|Text Summary| E[GPT-5 Mini]
+    C -->|Vision| F[GPT-4o Mini]
+    D --> G[ChromaDB]
+    E --> G
+    F --> G
+    H[User Query] --> I{Router Agent}
+    I -->|ID Query| J[Strict Metadata Filter]
+    I -->|Concept| K[Hybrid Search]
+    J --> L[Cross-Encoder Reranker]
+    K --> L
+    L --> M[GPT-5 Mini Response]
+````
+
+## 🛠️ Tech Stack
+
+- **Extraction**: `marker-pdf` (GPU-accelerated layout analysis & OCR)
+- **Orchestration**: LangChain (Custom Dynamic Router & Multimodal Chains)
+- **Metadata Agent**: `Claude 3.5 Sonnet` (Chosen for superior reasoning on protocol headers)
+- **Vision Agent**: `GPT-4o-mini` (Benchmarked as best cost/performance for chart analysis)
+- **Embeddings**: `NeuML/pubmedbert-base-embeddings` (Biomedical domain-specific)
+- **Vector Store**: `ChromaDB` (Persistent local storage with metadata filtering)
+- **Reranking**: `cross-encoder/ms-marco-MiniLM-L-6-v2`
+- **Environment**: Python 3.11.14 | Docker
+-----
+
+
+## 🔬 Engineering Decisions: The Vision Model Benchmark
+
+Handling redacted clinical images required a specialized Vision model. We benchmarked 9 leading models to find the optimal balance of cost, speed, and safety compliance.
+
+**The Challenge:** The pipeline needed to extract data from complex figures like this Genomic Heatmap:
+
+![Genomic Heatmap](images/benchmark_heatmap.jpeg)
+*(Figure 1 from Trial NCT02423343)*
+
+### Benchmark Results
+I wrote a custom benchmarking script ([`scripts/benchmark_vision.py`](scripts/benchmark_vision.py)) to test latency and quality against this "Golden Sample."
+
+| Model | Latency | Cost (Est.)* | Quality (Chars) | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **GPT-5.1** | 12.07s | $0.00130 | 0 | ❌ **FAILED** (Safety Refusal) |
+| **GPT-5-mini** | 20.50s | $0.00125 | 0 | ❌ **FAILED** (Safety Refusal) |
+| **GPT-4.1-mini** | 7.96s | $0.00240 | 2,070 | ✅ Good |
+| **GPT-4o-mini** | **9.45s** | **$0.00045** | **1,809** | ✅ **WINNER** (Best Value) |
+| **Claude Haiku 4.5** | 7.68s | $0.00350 | 1,596 | ✅ Good |
+| **Claude Haiku 3.5** | 6.81s | ~$0.00025 | 1,110 | ✅ Good (Fastest) |
+| **Claude 3.7 Sonnet**| 7.70s | $0.01050 | 1,168 | ✅ Good |
+| **Claude 4.5 Sonnet**| 17.13s | $0.01050 | 1,934 | ✅ Excellent Detail |
+
+*\*Cost estimated per single image transaction.*
+
+### Key Findings
+1.  **The "Safety Gap":** Both `gpt-5.1` and `gpt-5-mini` consistently refused to analyze the clinical heatmap, returning empty responses due to strict safety filters regarding medical data.
+2.  **Cost Efficiency:** `gpt-4o-mini` was the clear winner for production scaling. It captured 85%+ of the relevant clinical details (PFS, OS, Genetic Mutations) while being **23x cheaper** than the high-end Claude Sonnet models.
+3.  **Decision:** I selected `gpt-4o-mini` for the production pipeline. This enables the processing of 120+ trial images for approximately **$0.05** total, ensuring the system remains cost-effective without sacrificing retrieval accuracy.
+
+-----
 
 ## 📊 Performance Benchmarks
 
@@ -30,62 +95,33 @@ I built a custom evaluation pipeline (`scripts/evaluate_retrieval.py`) to benchm
 | **Concept** | *"Side effects of PARP..."* | **Hybrid** (Semantic + BM25) | **100%** | 1.01s |
 | **Filtering** | *"Phase 3 trials for NSCLC"* | **Metadata Filter** | **100%** | 0.85s |
 
-> **Note on Latency:** First-token latency includes a one-time model loading cost (Cold Start) of ~8-10s. Subsequent queries utilize cached resources in RAM, executing in <1.5s.
+-----
 
----
+## 💼 Business Impact
 
-## 📖 The Engineering Journey
+This system addresses a high-value opportunity in clinical trial optimization by unlocking unstructured protocol data:
 
-### 1. The Problem: "The Semantic Noise Trap"
-My initial MVP used a standard RAG pipeline (Semantic Search with ChromaDB). While it worked for general questions, it failed catastrophically on specific clinical queries:
-* **Query:** *"What is the primary objective of study 3000-02-005?"*
-* **Failure:** The retriever returned "primary objective" sections from *other* trials (semantic matches) but missed the specific protocol ID because it was buried in the text.
-* **Diagnosis:** "BM25 Leaks" — high-frequency keywords drowned out the specific ID.
+  * **Efficiency:** Reduces protocol review time from hours to potentially seconds via instant, context-aware retrieval.
+  * **Precision:** Dynamic Routing architecture achieves high fidelity on critical safety queries, significantly improving accuracy over standard keyword search.
+  * **Dark Data Access:** Successfully extracts and synthesizes data from complex images and flowcharts (e.g., toxicity management algorithms) that standard OCR misses.
+  * **Compliance:** Provides a verifiable audit trail with direct links to source documents and page numbers for regulatory validation.
 
-### 2. The Pivot: Agentic Architecture
-I re-architected the pipeline into an **Agentic System**:
-* **Smart Ingestion:** Built an ingestion agent (`ingest_data_advanced.py`) using **Claude Sonnet 4.5** to extract 7 key metadata fields (Phase, Indication, Drug) into a structured schema before chunking.
-* **Dynamic Routing Agent:** Implemented a Regex-based Router in the query engine to detect intent.
-    * **If ID is detected:** System enters **Strict Mode** (Disables BM25, enforces Hard Metadata Filters).
-    * **If Concept is detected:** System enters **Hybrid Mode** (70% Semantic / 30% Keyword).
-* **Precision Reranking:** Added a `CrossEncoder` (MS-MARCO) step to re-score the final results.
+-----
 
----
+## 🔮 Limitations & Future Work
 
-## 🏗️ System Architecture
+### Current Limitations
 
-### Phase 1: Intelligent Extraction (The "Generator")
-* **Tool:** `marker-pdf`
-* **Logic:** Converts complex, column-heavy clinical PDFs into clean Markdown and extracts figures/tables as separate artifacts.
+  * **Complex Redactions:** While the vision agent salvages most data, heavy redactions in some legacy PDFs can still result in partial data loss.
+  * **Cold Start:** The initial model loading on serverless GPU instances creates a \~8-10s latency on the very first query.
 
-### Phase 2: Advanced Ingestion (The "Brain")
-* **Script:** `scripts/ingest_data_advanced.py`
-* **Model:** `claude-sonnet-4-5-20250929` (Metadata Extraction) + `gpt-5-mini` (Summarization).
-* **Embedding:** `NeuML/pubmedbert-base-embeddings` (Domain-specific biomedical embeddings).
-* **Robustness:** Uses `@backoff` decorators and Idempotent Checkpointing to resume long jobs.
+### Roadmap
 
-### Phase 3: Agentic Retrieval (The "Router")
-* **Script:** `scripts/query_rag.py` / `app_v2.py`
-* **Router:** Dynamic Router detects ID-heavy queries vs. concept queries.
-* **Retriever:** Hybrid Ensemble (`BM25` + `Chroma`) with dynamic weighting.
-* **Multimodal:** The UI renders retrieved images (tables/figures) directly in the chat stream.
+  * [ ] Add streaming responses for better UX.
+  * [ ] Implement confidence scores for metadata extraction.
+  * [ ] Build evaluation dataset with 100+ clinical queries.
 
----
-
-## 💰 Resource & Cost Analysis
-
-### 1. Compute Infrastructure (RunPod)
-* **Hardware:** NVIDIA RTX 3090 (24GB VRAM).
-* **Cost:** **~$0.22 / hour**.
-* **Performance:** `PubMedBERT` encodes ~100 chunks/second on GPU.
-
-### 2. The "Hybrid Brain" Strategy
-To optimize costs, tasks are assigned to the most appropriate model tier:
-* **Reasoning (Claude Sonnet 4.5):** Used *only* for high-value metadata extraction (Superior reasoning for context).
-* **Scale (GPT-5-mini):** Used for summarizing thousands of text chunks (Cost-efficiency for high volume).
-* **Total Ingestion Cost:** Processed 7 full trials (4,800+ requests) for **~$6.50**.
-
----
+-----
 
 ## 📂 Repository Structure
 
@@ -95,10 +131,12 @@ To optimize costs, tasks are assigned to the most appropriate model tier:
 ├── scripts/
 │   ├── ingest_data_advanced.py   # The "Brain": Metadata extraction & Indexing
 │   ├── query_rag.py              # The "Logic": Dynamic Router & RAG Chain
+│   ├── fix_image_descriptions.py # The "Repair Agent": Vision-based metadata augmentation
+│   ├── benchmark_vision.py       # The "Lab": Model comparison script
 │   └── evaluate_retrieval.py     # The "Proof": Calculating Recall@K
 ├── data/                         # (Ignored) ChromaDB & Docstore
 └── requirements.txt              # Dependencies
-````
+```
 
 -----
 
@@ -113,10 +151,12 @@ The easiest way to run the full system with all dependencies.
 docker build -t clinical-rag .
 
 # 2. Run the container (Exposes port 8501)
-docker run -p 8501:8501 clinical-rag
+docker run --env-file .env -p 8501:8501 clinical-rag
 ```
 
 *Navigate to `http://localhost:8501`*
+
+```
 
 ### Option B: Local Development
 
@@ -132,5 +172,4 @@ pip install -r requirements.txt
 streamlit run app_v2.py
 ```
 
-```
 ```
