@@ -19,16 +19,17 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 5. Application Code
-# IMPORTANT: We copy app_v2.py, but we can rename it to app.py inside the container for simplicity, 
-# or just call it app_v2.py in the CMD. Let's keep it explicit.
 COPY app_v2.py .
 COPY scripts/ scripts/
 
 # 6. Data Ingestion (The "Self-Contained" Magic)
-# This copies your local vector DB into the container image.
-# Ensure these folders exist locally before building!
+# Copy Database
 COPY data/chroma_db_advanced /app/data/chroma_db_advanced
 COPY data/docstore_advanced.pkl /app/data/docstore_advanced.pkl
+
+# --- CRITICAL FIX: Copy the Images ---
+COPY output/ /app/output/
+# -------------------------------------
 
 # 7. Network
 EXPOSE 8501
@@ -38,5 +39,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=40s \
   CMD curl -f http://localhost:8501/_stcore/health || exit 1
 
 # 9. Run Command
-# Note: We point to app_v2.py here
 CMD ["streamlit", "run", "app_v2.py", "--server.headless", "true"]

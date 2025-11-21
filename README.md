@@ -2,9 +2,12 @@
 
 ![Status](https://img.shields.io/badge/Status-Phase_3:_Advanced_Architecture-green) ![Python](https://img.shields.io/badge/Python-3.11-blue) ![Docker](https://img.shields.io/badge/Docker-Ready-blue)
 
+[![Watch the Demo](images/demo_thumbnail.png)](https://www.loom.com/share/fa53f00157fc407aafc4dd02c4d7f1ee)
+> *Click the image above to watch the 4-minute demo video.*
+
 **Current Status:** 🔬 **Phase 3: Advanced Architecture (Metadata-Driven Agent)**
 
-This is an end-to-end **Agentic RAG system** designed to answer complex questions about clinical trial protocols with high precision. Unlike standard RAG demos, this project solves the specific challenges of **"Filter-then-Search"** workflows in the medical domain by combining structured metadata extraction (via **Claude Sonnet 4.5**) with a Dynamic Router and Semantic Retrieval.
+This is an end-to-end **agentic RAG system** designed to answer complex questions about clinical trial protocols with high precision. Unlike standard RAG demos, this project solves the specific challenges of **"Filter-then-Search"** workflows in the medical domain by combining structured metadata extraction (via **Claude Sonnet 4.5**) with a Dynamic Router and Semantic Retrieval.
 
 ---
 
