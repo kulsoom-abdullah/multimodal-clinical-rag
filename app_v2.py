@@ -35,6 +35,14 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 st.set_page_config(page_title="Clinical Trial RAG", layout="wide", page_icon="🧬")
 
+# --- DEBUG BLOCK ---
+# import os
+# st.sidebar.error(f"Current Working Dir: {os.getcwd()}")
+# if os.path.exists("output"):
+#     st.sidebar.success(f"Output folder exists! Contains: {len(os.listdir('output'))} items")
+# else:
+#     st.sidebar.error("Output folder NOT FOUND in current directory.")
+
 # --- MODEL CONFIGURATION ---
 # Option A: Speed & Cost (Default)
 LLM_MODEL = "gpt-5-mini"
@@ -286,7 +294,34 @@ ANSWER (Structured for a Clinical Audience):"""
         response = chain.invoke(prompt)
         response_container.markdown(response)
 
-        # 3. Evidence Display (Robust Path Handling)
+        # --- NEW: Auto-Display Images in Chat ---
+        # If an image was retrieved, show it directly!
+        for doc in docs:
+            if doc.metadata.get("chunk_type") == "image":
+                # Reuse the path finding logic
+                img_filename = doc.metadata.get("filename")
+                if not img_filename:
+                     # Fallback logic
+                     raw_path = doc.metadata.get("source", "")
+                     img_filename = os.path.basename(raw_path)
+
+                # Construct paths again (quick check)
+                trial_id = doc.metadata.get("trial_id", "Unknown")
+                pdf_stem = doc.metadata.get("pdf_stem", "Unknown")
+                
+                possible_paths = [
+                    Path(f"output/{trial_id}/{pdf_stem}/images/{img_filename}"),
+                    Path(f"output/{trial_id}/{img_filename}"),
+                    Path(img_filename)
+                ]
+                
+                for p in possible_paths:
+                    if p.exists():
+                        st.image(str(p), caption=f"🖼️ Retrieved Figure: {img_filename}")
+                        break
+        # ----------------------------------------
+
+        # 3. Evidence Display (Keep this for detailed inspection)
         with st.expander("📚 View Retrieved Evidence"):
             for i, doc in enumerate(docs, 1):
                 meta = doc.metadata
@@ -296,57 +331,50 @@ ANSWER (Structured for a Clinical Audience):"""
                 )
 
                 if meta.get("chunk_type") == "image":
-                    # --- ROBUST IMAGE LOADING ---
-                    raw_path = meta.get("source", "")
-                    img_filename = os.path.basename(raw_path)
+                    # 1. Try to get the direct filename from metadata (Best Method)
+                    img_filename = meta.get("filename")
+                    
+                    # 2. Fallback: If missing, try to parse from source or text
+                    if not img_filename:
+                        raw_path = meta.get("source", "")
+                        img_filename = os.path.basename(raw_path)
+                        if img_filename.lower().endswith(".md"):
+                            # Try to find image name in the description
+                            match = re.search(r"([a-zA-Z0-9_]+\.(?:jpeg|jpg|png))", doc.page_content, re.IGNORECASE)
+                            if match:
+                                img_filename = match.group(1)
 
-                    # FIX: If metadata points to a .md file, extract the real image name from the text content
-                    if img_filename.lower().endswith(".md"):
-                        # Look for pattern: _page_116_Figure_2.jpeg inside the content
-                        match = re.search(
-                            r"(_page_.*?\.(?:jpeg|jpg|png))",
-                            doc.page_content,
-                            re.IGNORECASE,
-                        )
-                        if match:
-                            img_filename = match.group(1)
-
-                    # Check paths
+                    # 3. Construct Paths (Docker & Local)
+                    # Your output structure is likely: output/TRIAL_ID/PDF_STEM/images/FILE.jpg
+                    trial_id = meta.get("trial_id", "Unknown")
+                    pdf_stem = meta.get("pdf_stem", "Unknown")
+                    
                     possible_paths = [
-                        # 1. The Standard Structure: output/TRIAL/STEM/images/FILE
-                        Path(
-                            f"output/{meta.get('trial_id')}/{meta.get('pdf_stem')}/images/{img_filename}"
-                        ),
-                        # 2. Flat output: output/TRIAL/FILE
-                        Path(f"output/{meta.get('trial_id')}/{img_filename}"),
-                        # 3. Exact path (only if it's NOT a markdown file)
-                        (
-                            Path(raw_path)
-                            if not str(raw_path).endswith(".md")
-                            else Path("NONEXISTENT")
-                        ),
-                        # 4. Current directory
-                        Path(img_filename),
+                        # Docker specific standard path
+                        Path(f"/app/output/{trial_id}/{pdf_stem}/images/{img_filename}"),
+                        # Local/Relative standard path
+                        Path(f"output/{trial_id}/{pdf_stem}/images/{img_filename}"),
+                        # Fallback: Flat structure
+                        Path(f"output/{trial_id}/{img_filename}"),
+                        # Fallback: Direct filename
+                        Path(img_filename)
                     ]
-
+                    
                     valid_img_path = None
                     for p in possible_paths:
-                        if p.exists() and not p.name.lower().endswith(".md"):
+                        if p.exists():
                             valid_img_path = p
                             break
-
+                            
                     if valid_img_path:
                         try:
-                            st.image(
-                                str(valid_img_path),
-                                caption=f"Figure from {meta.get('pdf_stem')}",
-                            )
+                            st.image(str(valid_img_path), caption=f"Figure: {img_filename}")
                         except Exception as e:
-                            st.error(
-                                f"⚠️ Could not display image: {valid_img_path.name}"
-                            )
+                            st.error(f"⚠️ Display Error: {e}")
                     else:
-                        st.warning(f"⚠️ Image file '{img_filename}' not found on disk.")
+                        # Debugging Helper: Show what we looked for
+                        st.warning(f"⚠️ Image '{img_filename}' not found on disk.")
+                        # st.caption(f"Searched paths: {[str(p) for p in possible_paths]}")
 
                     st.info(f"**AI Analysis:** {doc.page_content}")
                 else:

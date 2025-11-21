@@ -107,19 +107,23 @@ This system addresses a high-value opportunity in clinical trial optimization by
   * **Compliance:** Provides a verifiable audit trail with direct links to source documents and page numbers for regulatory validation.
 
 -----
-
 ## 🔮 Limitations & Future Work
 
 ### Current Limitations
-
-  * **Complex Redactions:** While the vision agent salvages most data, heavy redactions in some legacy PDFs can still result in partial data loss.
-  * **Cold Start:** The initial model loading on serverless GPU instances creates a \~8-10s latency on the very first query.
+* **Extraction Consistencies:**
+    * **Phase Extraction:** Metadata extraction currently struggles with inconsistent formatting in source PDFs (e.g., "Phase 2" vs "Phase II" vs "Phase 1b/2"), leading to occasional filtering gaps.
+    * **Complex Redactions:** While the vision agent salvages most data, heavy redactions in some legacy PDFs can still result in partial data loss.
+* **Retrieval Bias:**
+    * **Semantic Density:** For broad conceptual queries (e.g., "Side effects"), the retriever may bias toward documents with the densest coverage of the topic rather than aggregating equally across all trials.
+    * **Cold Start:** The initial model loading on serverless GPU instances creates a ~8-10s latency on the very first query.
+* **Scope of Data:**
+    * **Protocols vs. Results:** The system correctly identifies that Clinical Protocols contain study *designs*, not study *results*. Queries asking for "results" (e.g., "What were the adverse events?") are correctly answered as "Not available in provided text" rather than hallucinated.
 
 ### Roadmap
-
-  * [ ] Add streaming responses for better UX.
-  * [ ] Implement confidence scores for metadata extraction.
-  * [ ] Build evaluation dataset with 100+ clinical queries.
+* [ ] **Robust Phase Detection:** Implement a multi-pass extraction agent using Regex + LLM validation to normalize Trial Phases into a standard enum.
+* [ ] **Compound Filtering:** Enable the UI to support "AND/OR" logic for filtering by both Trial ID AND Phase simultaneously.
+* [ ] **Metadata Confidence Scores:** Add a confidence score (0.0 - 1.0) to extracted metadata fields to flag low-confidence tags for human review.
+* [ ] **Streaming Responses:** Implement token streaming to reduce perceived latency for long answers.
 
 -----
 
