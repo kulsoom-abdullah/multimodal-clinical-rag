@@ -53,8 +53,9 @@ load_dotenv()
 
 # --- CONFIGURATION ---
 # Models
-EXTRACTION_MODEL_NAME = "claude-sonnet-4-5-20250929"
-SUMMARY_MODEL_NAME = "gpt-5-mini"
+
+EXTRACTION_MODEL_NAME = "claude-sonnet-4-5-20250929" 
+SUMMARY_MODEL_NAME = "gpt-4o-mini" 
 
 # Embeddings: Switched to PubMedBERT based on Deep Research
 EMBEDDING_MODEL = "NeuML/pubmedbert-base-embeddings"
@@ -190,81 +191,72 @@ def agent_extract_metadata(extractor_llm, text_context: str, filename: str) -> D
 
 @backoff.on_exception(backoff.expo, Exception, max_time=300)
 def agent_summarize(summarizer_llm, content: str, kind: str, meta: Dict) -> str:
-    """Uses GPT to summarize a specific chunk (Text, Table, or Image)."""
-
+    """
+    Uses GPT to summarize a specific chunk (Text, Table, or Image).
+    handles multimodal inputs correctly.
+    """
+    
     # Safety check
     if not content or not content.strip():
         return ""
 
     # 1. Prepare context
-    trial_id = meta.get("trial_id", "Unknown")
-    phase = meta.get("trial_phase", "Unknown")
-    drug = meta.get("intervention_drug", "Unknown")
-    protocol_id = meta.get("protocol_id", "Unknown")
-
-    context_str = (
-        f"Trial: {trial_id} (Protocol: {protocol_id}), Phase: {phase}, Drug: {drug}"
-    )
-
+    trial_id = meta.get('trial_id', 'Unknown')
+    phase = meta.get('trial_phase', 'Unknown')
+    drug = meta.get('intervention_drug', 'Unknown')
+    protocol_id = meta.get('protocol_id', 'Unknown')
+    
     # --- CASE: IMAGE (VISION) ---
     if kind == "image":
         try:
-            # content here is the file path string
+            # In image mode, 'content' is the file path
             image_path = Path(content)
             if image_path.exists():
                 base64_image = encode_image(image_path)
-
-                # The Redaction-Resilient Prompt
+                
                 prompt_text = f"""
                 CONTEXT:
-                This image comes from Clinical Trial: {trial_id}
-                Study Phase: {phase}
-                Drug/Intervention: {drug}
+                Trial: {trial_id} (Protocol: {protocol_id})
+                Phase: {phase}
+                Drug: {drug}
                 
                 INSTRUCTIONS:
-                Analyze this image for RAG retrieval. Note that some elements may be redacted.
-                
-                1. SANITY CHECK: If it is a Logo, Blank Page, or Noise, output ONLY: "IGNORE_IMAGE".
-                2. ANALYSIS: Describe the image type (e.g., Kaplan-Meier, Flowchart), title, axes, and visible data trends.
-                3. REDACTIONS: If redacted, acknowledge it but infer the context using the metadata provided above.
+                Analyze this clinical figure.
+                1. CLASSIFY: If it's a logo/noise, output "IGNORE_IMAGE".
+                2. DESCRIBE: Capture chart type, axis labels, data trends, and key numbers.
+                3. REDACTIONS: If present, acknowledge them but describe visible context.
                 """
-
+                
                 msg = HumanMessage(
                     content=[
                         {"type": "text", "text": prompt_text},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            },
-                        },
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}},
                     ]
                 )
-                # Call the model directly with the message list
+                # Call the model directly
                 response = summarizer_llm.invoke([msg])
                 return response.content
             else:
                 return f"Image file not found: {image_path.name}"
         except Exception as e:
-            return f"Error analyzing image {content}: {str(e)}"
+            return f"Error analyzing image: {str(e)}"
 
     # --- CASE: TEXT/TABLE ---
     else:
-        if kind == "table":
+        context_str = f"Trial: {trial_id}, Phase: {phase}, Drug: {drug}"
+        
+        if kind == "table": 
             instr = "Summarize this clinical table. Focus on data values, row/column headers, and trends."
-        else:
+        else: 
             instr = "Summarize this clinical text chunk. Capture inclusion criteria, dosing, safety signals, or statistical methods."
-
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                ("system", instr),
-                ("user", "Global Context: {context}\n\nContent:\n{content}"),
-            ]
-        )
-
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", instr),
+            ("user", "Global Context: {context}\n\nContent:\n{content}")
+        ])
+        
         chain = prompt | summarizer_llm | (lambda x: x.content)
         return chain.invoke({"context": context_str, "content": content})
-
 
 # --- MAIN ---
 
