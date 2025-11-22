@@ -30,19 +30,19 @@ graph LR
     subgraph Ingestion
     A[PDF Input] --> B(Marker Extraction)
     B --> C{Data Router}
-    C -->|Images| D[GPT-4o-mini<br/>Vision Captioning]
+    C -->|Images| D["GPT-4o-mini<br/>Vision Captioning"]
     C -->|Text| E[Chunking]
-    D --> F[ChromaDB<br/>Vector Store]
+    D --> F["ChromaDB<br/>Vector Store"]
     E --> F
     end
 
     subgraph Retrieval_Pipeline
     Q[User Query] --> R{Router Agent}
     R -->|ID Query| S[Strict Metadata Filter]
-    R -->|Concept Query| T[Hybrid Search<br/>(BM25 + Vector)]
+    R -->|Concept Query| T["Hybrid Search<br/>(BM25 + Vector)"]
     S --> U[15 Candidate Docs]
     T --> U
-    U --> V[Cross-Encoder<br/>Re-Ranking]
+    U --> V["Cross-Encoder<br/>Re-Ranking"]
     end
 
     subgraph Generation
