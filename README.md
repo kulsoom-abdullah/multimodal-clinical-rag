@@ -21,6 +21,17 @@ Why build a complex RAG system instead of fine-tuning a model or using a long-co
 
 ---
 
+## Evaluation
+
+Evaluated against a 4-query evaluation set spanning ID-lookup, semantic, and phase-filter queries:
+
+- **100% Recall@3 (4/4)** across all query types — trial-level: a query counts as a hit if any chunk from the expected trial lands in the top 3 reranked results.
+- Grounded answers enforced by a strict citation requirement in the prompt.
+
+See [`scripts/evaluate_retrieval.py`](scripts/evaluate_retrieval.py) for methodology.
+
+---
+
 ## 🏗️ System Architecture
 
 The system employs a **Two-Stage Retrieval Pipeline** (Funnel Approach) to balance recall and precision, coupled with a **Decoupled Multimodal Strategy** to handle complex clinical figures.

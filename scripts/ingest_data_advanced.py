@@ -5,7 +5,7 @@ Advanced Ingestion Script: "The Clinical Researcher"
 Architecture:
 1. Extraction (The Brain): Uses Claude Sonnet 4.5 (superior reasoning) to read
    headers/synopses and extract structured metadata (Phase, Drugs, Endpoints).
-2. Summarization (The Worker): Uses GPT-5-mini (cost-effective) to summarize
+2. Summarization (The Worker): Uses GPT-4o-mini (cost-effective) to summarize
    individual chunks (text/tables/images).
 3. Storage: Embeds via PubMedBERT (Domain Specific) and stores in ChromaDB.
 

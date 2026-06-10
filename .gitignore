@@ -18,7 +18,6 @@ output.zip
 # NEW: Advanced Architecture Data (Add these!)
 data/chroma_db_advanced/
 data/docstore_advanced.pkl
-data/eval.jsonl
 
 # OS files
 .DS_Store

@@ -1,0 +1,4 @@
+{"query": "What is the primary objective of study 3000-02-005?", "expected_trial_id": "NCT05751629", "type": "protocol_lookup"}
+{"query": "What are the common side effects of PARP inhibitors?", "expected_trial_id": "NCT05751629", "type": "semantic"}
+{"query": "What is the dosing schedule for Galunisertib?", "expected_trial_id": "NCT02423343", "type": "semantic"}
+{"query": "Show me Phase 3 trials for NSCLC", "expected_trial_id": "NCT02578680", "type": "filter_phase"}
