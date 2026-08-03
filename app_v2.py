@@ -28,6 +28,18 @@ from langchain_classic.retrievers.document_compressors import CrossEncoderRerank
 # --- Config ---
 from dotenv import load_dotenv
 
+import sys
+
+sys.path.append(str(Path(__file__).resolve().parent))
+from scripts.router import (  # noqa: E402
+    ANSWER_PROMPT,
+    NO_CONTEXT_MESSAGE,
+    STRICT,
+    UNKNOWN_ID,
+    decide_route,
+    load_known_ids,
+)
+
 load_dotenv()
 
 # Suppress tokenizers parallelism warning
@@ -91,8 +103,47 @@ def load_resources():
     return vectorstore, docstore, all_text_docs
 
 
+@st.cache_resource
+def load_query_time_resources(_vectorstore, _all_text_docs):
+    """Reranker, BM25 index and identifier whitelist.
+
+    These were previously rebuilt on every chat message: the cross-encoder was
+    re-instantiated and the BM25 index re-built over every text chunk per query.
+    """
+    cross_encoder = HuggingFaceCrossEncoder(model_name=RERANKER_MODEL)
+    reranker = CrossEncoderReranker(model=cross_encoder, top_n=5)
+
+    keyword_retriever = BM25Retriever.from_documents(_all_text_docs)
+    keyword_retriever.k = 10
+
+    known_ids = load_known_ids(_vectorstore)
+    return reranker, keyword_retriever, known_ids
+
+
+@st.cache_resource
+def load_indexed_phases(_vectorstore):
+    """Phase values actually present in the index.
+
+    Hardcoding this list let the sidebar offer a phase that matched zero documents.
+    """
+    collection = _vectorstore._collection
+    total = collection.count()
+    phases, offset = set(), 0
+    while offset < total:
+        batch = collection.get(include=["metadatas"], limit=2000, offset=offset)
+        for meta in batch["metadatas"]:
+            value = meta.get("trial_phase")
+            if value and value != "UNKNOWN":
+                phases.add(value)
+        offset += 2000
+    return sorted(phases)
+
+
 try:
     vectorstore, docstore, all_text_docs = load_resources()
+    reranker, keyword_retriever, known_ids = load_query_time_resources(
+        vectorstore, all_text_docs
+    )
 except Exception as e:
     st.error(f"Failed to load system: {e}")
     st.stop()
@@ -129,29 +180,24 @@ with st.sidebar:
 
     st.header("⚡ Quick Filters")
     st.caption("Applies only to Global Search")
-    phases = ["Phase 1", "Phase 1b/2", "Phase 2", "Phase 3"]
-    selected_phase = st.multiselect("Trial Phase", phases)
+    selected_phase = st.multiselect("Trial Phase", load_indexed_phases(vectorstore))
 
     st.divider()
     st.info(f"📚 **{vectorstore._collection.count()}** chunks indexed")
 
 
 # --- DYNAMIC ROUTER (The Brain) ---
-def detect_intent(query: str):
-    """Matches your CLI script logic."""
-    nct_match = re.search(r"(NCT\d{8})", query, re.IGNORECASE)
-    if nct_match:
-        return "trial_id", nct_match.group(1).upper()
+def _phase_filtered_docs(docs, phase_filters):
+    """Apply the phase filter to BM25 results.
 
-    protocol_match = re.search(
-        r"(\d{4}-\d{2}-\d{3}|[A-Z0-9]{2,5}-[A-Z0-9]{2,5}-[A-Z0-9]{3,5})",
-        query,
-        re.IGNORECASE,
-    )
-    if protocol_match:
-        return "protocol_id", protocol_match.group(1)
-
-    return None, None
+    The filter used to be attached only to the semantic retriever's search_kwargs,
+    so the keyword half of the ensemble returned out-of-phase documents regardless
+    of the sidebar selection.
+    """
+    if not phase_filters:
+        return docs
+    allowed = set(phase_filters)
+    return [d for d in docs if d.metadata.get("trial_phase") in allowed]
 
 
 def get_dynamic_retriever(query, phase_filters=None, trial_filter=None):
@@ -159,7 +205,7 @@ def get_dynamic_retriever(query, phase_filters=None, trial_filter=None):
     Args:
         trial_filter (str): If provided (from Sidebar), forces a Hard Filter.
     """
-    intent_type, intent_value = detect_intent(query)
+    decision = decide_route(query, known_ids)
 
     # Base Semantic
     semantic_retriever = MultiVectorRetriever(
@@ -169,29 +215,44 @@ def get_dynamic_retriever(query, phase_filters=None, trial_filter=None):
         search_kwargs={"k": 15},
     )
 
-    # Reranker
-    cross_encoder = HuggingFaceCrossEncoder(model_name=RERANKER_MODEL)
-    reranker = CrossEncoderReranker(model=cross_encoder, top_n=5)
-
     # --- PRIORITY 1: SIDEBAR SELECTION (The "Context Switch") ---
     if trial_filter:
         strategy = f"🧬 **Context Locked:** {trial_filter}"
-        # Apply Hard Filter
+        if decision.route == STRICT and decision.filter_value != trial_filter:
+            # An ID in the query that disagrees with the sidebar lock used to be
+            # silently ignored, answering about a trial the user did not name.
+            strategy += (
+                f" — ignoring `{decision.filter_value}` from your query; "
+                "clear the sidebar selection to search it."
+            )
         semantic_retriever.search_kwargs["filter"] = {"trial_id": trial_filter}
         # Use Strict Semantic (No BM25 needed as scope is small)
         base_retriever = semantic_retriever
 
     # --- PRIORITY 2: QUERY ID DETECTION (Strict Mode) ---
-    elif intent_type:
-        strategy = f"🎯 {intent_type} Detected ({intent_value}) -> **Strict Filtering**"
-        semantic_retriever.search_kwargs["filter"] = {intent_type: intent_value}
+    elif decision.route == STRICT:
+        strategy = (
+            f"🎯 {decision.filter_key} Detected ({decision.filter_value}) "
+            "-> **Strict Filtering**"
+        )
+        semantic_retriever.search_kwargs["filter"] = {
+            decision.filter_key: decision.filter_value
+        }
         base_retriever = semantic_retriever
+
+    # --- PRIORITY 2b: NAMED BUT UNINDEXED TRIAL (no search is performed) ---
+    elif decision.route == UNKNOWN_ID:
+        strategy = (
+            f"🚫 `{decision.rejected_candidate}` is not in this index "
+            "-> **No Search Performed**"
+        )
+        base_retriever = semantic_retriever  # unused; the caller short-circuits
 
     # --- PRIORITY 3: GLOBAL HYBRID SEARCH ---
     else:
         strategy = "🧠 Global Query -> **Hybrid Search**"
 
-        # Apply Phase Filters
+        # Apply Phase Filters to the semantic half via metadata filtering...
         if phase_filters:
             filter_dict = {}
             if len(phase_filters) == 1:
@@ -200,11 +261,7 @@ def get_dynamic_retriever(query, phase_filters=None, trial_filter=None):
                 filter_dict["trial_phase"] = {"$in": phase_filters}
             semantic_retriever.search_kwargs["filter"] = filter_dict
 
-        # Build Keyword Retriever
-        keyword_retriever = BM25Retriever.from_documents(all_text_docs)
-        keyword_retriever.k = 10
-
-        # Ensemble
+        # Ensemble (BM25 retriever is cached; see load_query_time_resources)
         base_retriever = EnsembleRetriever(
             retrievers=[semantic_retriever, keyword_retriever], weights=[0.7, 0.3]
         )
@@ -214,7 +271,7 @@ def get_dynamic_retriever(query, phase_filters=None, trial_filter=None):
         base_compressor=reranker, base_retriever=base_retriever
     )
 
-    return final_retriever, strategy
+    return final_retriever, strategy, decision
 
 
 # --- APP LOGIC ---
@@ -239,38 +296,39 @@ if prompt := st.chat_input("Ask about a protocol..."):
         # 1. Router Visualization
         with st.status("🔍 Analyzing Query...", expanded=True) as status:
             # PASS THE NEW SIDEBAR FILTER
-            retriever, strategy = get_dynamic_retriever(
+            retriever, strategy, decision = get_dynamic_retriever(
                 prompt, selected_phase, selected_trial_id
             )
 
             st.write(f"**Router Decision:** {strategy}")
 
-            st.write("📚 Retrieving & Reranking...")
-            docs = retriever.invoke(prompt)
-            st.write(f"✅ Found {len(docs)} highly relevant chunks")
+            if decision.route == UNKNOWN_ID and not selected_trial_id:
+                docs = []
+                st.write(f"⚠️ {decision.reason}")
+            else:
+                st.write("📚 Retrieving & Reranking...")
+                docs = retriever.invoke(prompt)
+                # BM25 does not honour metadata filters, so enforce the phase
+                # selection on the merged result set.
+                if not selected_trial_id and decision.route != STRICT:
+                    docs = _phase_filtered_docs(docs, selected_phase)
+                st.write(f"✅ Retrieved {len(docs)} chunks")
             status.update(label="✅ Ready", state="complete", expanded=False)
 
-        # 2. Generation
-        # --- UPGRADED PROMPT ---
-        template = """You are a Senior Clinical Research Associate (CRA) assisting with protocol verification.
-Your task is to answer the user's question based *strictly* on the provided context.
+        # 2. Generation — refuse rather than prompting the model with no evidence.
+        if not docs:
+            if decision.route == UNKNOWN_ID and not selected_trial_id:
+                response = (
+                    f"**{decision.rejected_candidate}** is not present in this index. "
+                    "No answer is possible from the indexed protocols."
+                )
+            else:
+                response = NO_CONTEXT_MESSAGE
+            response_container.markdown(response)
+            st.session_state.messages.append({"role": "assistant", "content": response})
+            st.stop()
 
-GUIDELINES:
-1. **Evidence-Based:** Answer only using the provided chunks. Do not use outside knowledge.
-2. **Hierarchy of Data:** If you see multiple versions (e.g., Protocol v1.0 vs Amendment 2), prioritize the LATEST information.
-3. **Safety First:** If the user asks about Dosing, Exclusion Criteria, or Toxicity Management, quote the text/values exactly.
-4. **Visuals:** If the context includes an image description (e.g., "Figure 1", "Flowchart"), refer to it in your answer.
-5. **Citations:** End your answer with the specific Source Documents used (e.g., "Source: SAP_001.pdf").
-
-CONTEXT:
-{context}
-
-QUESTION:
-{question}
-
-ANSWER (Structured for a Clinical Audience):"""
-
-        prompt_template = ChatPromptTemplate.from_template(template)
+        prompt_template = ChatPromptTemplate.from_template(ANSWER_PROMPT)
 
         # --- LLM SELECTION LOGIC ---
         if "claude" in LLM_MODEL:
