@@ -1,0 +1,40 @@
+# Baseline retrieval eval — captured before the 2026-08 cleanup pass
+#
+# Date:            2026-08-03
+# Commit:          f8890a717955f3dcd3072b4ba322b5cea561d1b4 (pre-fix state of main)
+# Index:           data/chroma_db_advanced, 5997 chunks
+# Docstore sha1:   73b2cf18ee96 (data/docstore_advanced.pkl)
+# Command:         python scripts/evaluate_retrieval.py
+#
+# Purpose: this is the BEFORE number. The index is rebuilt later in this pass after the
+# trial_id identity fix, so Recall@3 is expected to move. Both figures are reported.
+# Known caveats at capture time (see audit): n=4; query 1 is tautological (its metadata
+# filter selects exactly the gold trial); random floor for this metric on this corpus is
+# 25.0%; the filter_phase query runs hybrid search, not a metadata filter.
+
+🧪 Starting Retrieval Evaluation...
+📦 Loading retrieval resources...
+
+QUERY                                              | TYPE            | FOUND?   | TIME    
+------------------------------------------------------------------------------------------
+
+   🔀 ROUTER: Detected protocol_id -> '3000-02-005'
+   🛡️  Strategy: STRICT MODE (Hard Metadata Filter, No BM25)
+What is the primary objective of study 3000-02-... | protocol_lookup | ✅ 1     | 0.53    s
+
+   🔀 ROUTER: No ID detected.
+   🧠 Strategy: HYBRID SEARCH (Semantic + BM25)
+What are the common side effects of PARP inhibi... | semantic        | ✅ 1     | 0.52    s
+
+   🔀 ROUTER: No ID detected.
+   🧠 Strategy: HYBRID SEARCH (Semantic + BM25)
+What is the dosing schedule for Galunisertib?...   | semantic        | ✅ 1     | 0.48    s
+
+   🔀 ROUTER: No ID detected.
+   🧠 Strategy: HYBRID SEARCH (Semantic + BM25)
+Show me Phase 3 trials for NSCLC...                | filter_phase    | ✅ 1     | 0.37    s
+==========================================================================================
+📊 FINAL METRICS:
+   • Recall@3: 100.0%  (Goal: >80%)
+   • Latency:  0.48s
+==========================================================================================
