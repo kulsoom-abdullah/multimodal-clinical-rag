@@ -15,7 +15,7 @@ Usage:
 import os
 import sys
 import re
-import uuid
+import hashlib
 import pickle
 import backoff
 import base64
@@ -195,10 +195,23 @@ def load_images(images_dir: Path) -> List[Dict[str, Any]]:
         return []
     images = []
     valid = {".jpg", ".jpeg", ".png"}
-    for p in images_dir.iterdir():
+    # Sorted: filesystem order is not stable across machines or reruns, and it
+    # would otherwise leak into chunk ordering.
+    for p in sorted(images_dir.iterdir()):
         if p.suffix.lower() in valid and p.stat().st_size > 5000:
             images.append({"path": p, "filename": p.name})
     return images
+
+
+def make_doc_id(*parts: Any) -> str:
+    """Deterministic parent id.
+
+    Derived from stable content coordinates rather than uuid4 so that re-running
+    ingestion over the same corpus reproduces the same ids, which is what makes a
+    rebuild comparable to the run before it.
+    """
+    key = "|".join("" if p is None else str(p) for p in parts)
+    return hashlib.sha1(key.encode("utf-8")).hexdigest()
 
 
 # --- AI AGENTS ---
@@ -400,7 +413,9 @@ def main():
                 summary = agent_summarize(
                     summarizer_llm, chunk.page_content, "text", meta
                 )
-                doc_id = str(uuid.uuid4())
+                doc_id = make_doc_id(
+                    meta.get("source_dir"), pdf_stem, "text", i
+                )
 
                 batch_sum.append(
                     Document(
@@ -414,7 +429,11 @@ def main():
                     print(f"       ...{i+1}")
 
             if batch_sum:
-                retriever.vectorstore.add_documents(batch_sum)
+                # ids= keyed on doc_id so a vector can be located and replaced later;
+                # without it Chroma assigns random UUIDs and deletes silently no-op.
+                retriever.vectorstore.add_documents(
+                    batch_sum, ids=[d.metadata["doc_id"] for d in batch_sum]
+                )
                 retriever.docstore.mset(batch_org)
                 print(f"    💾 Saved {len(batch_sum)} chunks.")
 
@@ -432,7 +451,9 @@ def main():
                     summary = agent_summarize(
                         summarizer_llm, str(img["path"]), "image", img_meta
                     )
-                    doc_id = str(uuid.uuid4())
+                    doc_id = make_doc_id(
+                        meta.get("source_dir"), pdf_stem, "image", img["filename"]
+                    )
 
                     img_batch_sums.append(
                         Document(
@@ -440,18 +461,24 @@ def main():
                             metadata={**img_meta, "doc_id": doc_id},
                         )
                     )
+                    # The caption is both the embedded text and the parent content.
+                    # Storing "Image: <filename>" as the parent meant a retrieved
+                    # figure carried no description into the answer context.
                     img_batch_orgs.append(
                         (
                             doc_id,
                             Document(
-                                page_content=f"Image: {img['filename']}",
-                                metadata=img_meta,
+                                page_content=summary,
+                                metadata={**img_meta, "doc_id": doc_id},
                             ),
                         )
                     )
 
                 if img_batch_sums:
-                    retriever.vectorstore.add_documents(img_batch_sums)
+                    retriever.vectorstore.add_documents(
+                        img_batch_sums,
+                        ids=[d.metadata["doc_id"] for d in img_batch_sums],
+                    )
                     retriever.docstore.mset(img_batch_orgs)
                     print(f"    💾 Saved {len(img_batch_sums)} images.")
 
