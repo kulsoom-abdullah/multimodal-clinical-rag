@@ -18,6 +18,38 @@ output.zip
 # NEW: Advanced Architecture Data (Add these!)
 data/chroma_db_advanced/
 data/docstore_advanced.pkl
+# empty stub from an abandoned migration; regenerable
+data/chroma_db_advanced_v2/
+
+# --- Personal / unpublished drafts: must never reach the public repo ---
+# interview preparation notes
+interview_prep.md
+# superseded README draft
+README_inprogress.md
+# demo video script
+Script for RAG AGENT.pages
+# local working audit notes, not user-facing docs
+docs/
+# untitled scratch image
+images/Untitled.png
+
+# --- Scratch & regenerable outputs ---
+out.txt
+output.zip
+
+# --- Superseded / local-only code, kept out of the published tree ---
+# router-less predecessor of app_v2.py; a second UI in the repo root is confusing
+app.py
+# ad-hoc local DB pokes and one-off checks; no asserts, not tests
+test_db.py
+scripts/check_ids.py
+scripts/ingest_data.py
+scripts/inspect_image.py
+scripts/sanity_check_db.py
+scripts/test_extraction.py
+# platform-specific ingestion pins, superseded by requirements.txt
+requirements-ingestion.txt
+requirements-mac-ingest.txt
 
 # OS files
 .DS_Store
