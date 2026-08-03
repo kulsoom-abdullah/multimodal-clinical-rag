@@ -1,0 +1,16 @@
+# PDF extraction stage only -- scripts/extract_pdfs.py.
+#
+# Run once, on a GPU machine, to turn source PDFs into the markdown and images
+# under output/. Nothing in the served application imports these, which is why
+# they are kept out of requirements.txt and out of the Docker runtime image.
+#
+#   pip install -r requirements-extraction.txt
+#   python scripts/extract_pdfs.py
+#
+# NOTE: unlike requirements.txt, these versions are NOT pinned to a verified
+# environment -- marker-pdf is not installed in the environment the rest of this
+# project was validated in, so the constraint below is a lower bound rather than
+# a version that has been run end to end here.
+
+marker-pdf>=1.0.0
+pillow>=11.0.0

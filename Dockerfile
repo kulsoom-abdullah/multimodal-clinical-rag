@@ -22,14 +22,21 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app_v2.py .
 COPY scripts/ scripts/
 
-# 6. Data Ingestion (The "Self-Contained" Magic)
-# Copy Database
-COPY data/chroma_db_advanced /app/data/chroma_db_advanced
-COPY data/docstore_advanced.pkl /app/data/docstore_advanced.pkl
-
-# --- CRITICAL FIX: Copy the Images ---
-COPY output/ /app/output/
-# -------------------------------------
+# 6. Data
+# The index, docstore and extracted figures are build artifacts, not source:
+# they are produced by scripts/extract_pdfs.py and scripts/ingest_data_advanced.py
+# from PDFs that are not redistributed here, and they are gitignored. They are
+# therefore mounted at run time rather than baked in -- COPYing them would make
+# this image unbuildable from a clean clone.
+#
+#   docker build -t clinical-rag .
+#   docker run --env-file .env -p 8501:8501 \
+#     -v "$(pwd)/data:/app/data" \
+#     -v "$(pwd)/output:/app/output" \
+#     clinical-rag
+#
+# Expected at /app/data/chroma_db_advanced, /app/data/docstore_advanced.pkl
+# and /app/output. The app reports a clear error if they are absent.
 
 # 7. Network
 EXPOSE 8501

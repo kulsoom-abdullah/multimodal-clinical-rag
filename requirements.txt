@@ -1,25 +1,38 @@
+# Runtime dependencies: Streamlit app, CLI query, retrieval eval, ingestion.
+# Versions pinned to the environment these were verified against.
+#
+# PDF extraction (marker-pdf) is NOT here -- see requirements-extraction.txt.
+# It is a heavy, GPU-oriented stage run once to produce output/, and nothing
+# in the served application imports it.
+
 # --- App Framework ---
-streamlit
+streamlit==1.51.0
 
 # --- Core RAG & LangChain ---
-langchain
-langchain-core
-langchain-community
-langchain-text-splitters
-langchain-openai
-langchain-anthropic    # <--- CRITICAL ADDITION for ingest_data_advanced.py
+langchain==1.0.7
+langchain-core==1.0.5
+langchain-community==0.4.1
+langchain-text-splitters==1.0.0
+langchain-openai==1.0.3
+langchain-anthropic==1.1.0
+# EnsembleRetriever, ContextualCompressionRetriever, MultiVectorRetriever,
+# CrossEncoderReranker. Imported by app_v2.py, scripts/query_rag.py and
+# scripts/ingest_data_advanced.py.
+langchain-classic==1.0.0
 
 # --- Newer LangChain Integrations ---
-langchain-chroma       
-langchain-huggingface  
+langchain-chroma==1.0.0
+langchain-huggingface==1.0.1
 
 # --- Database & Retrieval ---
-chromadb
-rank_bm25              
-sentence-transformers  
+chromadb==1.3.4
+rank_bm25==0.2.2
+sentence-transformers==5.1.2
 
 # --- Utilities ---
-openai                 
-backoff                
-python-dotenv
-watchdog
+openai==2.8.0
+backoff==2.2.1
+python-dotenv==1.2.1
+watchdog==6.0.0
+# Structured-output schema for metadata extraction (ingest_data_advanced.py).
+pydantic==2.12.4
