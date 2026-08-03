@@ -8,9 +8,8 @@ Usage:
 """
 import sys
 import pickle
-import re
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List
 
 # --- LangChain Imports ---
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -34,6 +33,17 @@ from langchain_classic.retrievers.multi_vector import MultiVectorRetriever
 
 import os
 
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from scripts.router import (  # noqa: E402
+    ANSWER_PROMPT,
+    NO_CONTEXT_MESSAGE,
+    STRICT,
+    UNKNOWN_ID,
+    decide_route,
+    detect_intent,  # noqa: F401  (re-exported for existing callers)
+    load_known_ids,
+)
+
 # Suppress tokenizers parallelism warning
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -54,31 +64,17 @@ CHROMA_DIR = Path("data/chroma_db_advanced")
 DOCSTORE_PATH = Path("data/docstore_advanced.pkl")
 
 
-def detect_intent(query: str) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Router Logic:
-    Analyzes the query to see if it references a specific Trial ID (NCT)
-    or an internal Protocol ID.
+# Routing and the answer prompt live in scripts/router.py so the CLI and the Streamlit
+# app cannot drift apart again. detect_intent is re-exported for existing callers.
+_KNOWN_IDS_CACHE: dict = {}
 
-    Returns:
-        (intent_type, value) -> e.g., ("trial_id", "NCT01234567")
-    """
-    # Regex for NCT IDs (e.g., NCT02423343)
-    nct_match = re.search(r"(NCT\d{8})", query, re.IGNORECASE)
-    if nct_match:
-        return "trial_id", nct_match.group(1).upper()
 
-    # Regex for Protocol IDs (e.g., 3000-02-005 or H9H-MC-JBEF)
-    # Catches standard formats appearing in headers
-    protocol_match = re.search(
-        r"(\d{4}-\d{2}-\d{3}|[A-Z0-9]{2,5}-[A-Z0-9]{2,5}-[A-Z0-9]{3,5})",
-        query,
-        re.IGNORECASE,
-    )
-    if protocol_match:
-        return "protocol_id", protocol_match.group(1)
-
-    return None, None
+def get_known_ids(vectorstore):
+    """Identifier whitelist for this index, computed once per vectorstore."""
+    key = id(vectorstore)
+    if key not in _KNOWN_IDS_CACHE:
+        _KNOWN_IDS_CACHE[key] = load_known_ids(vectorstore)
+    return _KNOWN_IDS_CACHE[key]
 
 
 def load_resources():
@@ -121,7 +117,7 @@ def build_dynamic_retriever(query: str, vectorstore, docstore, all_text_docs):
     1. STRICT MODE (ID Detected): Uses ONLY Semantic Search with a HARD Metadata Filter.
     2. HYBRID MODE (Conceptual): Uses Semantic + Keyword (BM25) + Reranking.
     """
-    intent_type, intent_value = detect_intent(query)
+    decision = decide_route(query, get_known_ids(vectorstore))
 
     # Base Semantic Retriever (MultiVector)
     semantic_retriever = MultiVectorRetriever(
@@ -137,12 +133,14 @@ def build_dynamic_retriever(query: str, vectorstore, docstore, all_text_docs):
 
     # --- ROUTING DECISION ---
 
-    if intent_type:
-        print(f"\n   🔀 ROUTER: Detected {intent_type} -> '{intent_value}'")
+    if decision.route == STRICT:
+        print(f"\n   🔀 ROUTER: {decision.reason}")
         print("   🛡️  Strategy: STRICT MODE (Hard Metadata Filter, No BM25)")
 
         # Apply Hard Filter to Semantic Search
-        semantic_retriever.search_kwargs["filter"] = {intent_type: intent_value}
+        semantic_retriever.search_kwargs["filter"] = {
+            decision.filter_key: decision.filter_value
+        }
 
         # In Strict Mode, we bypass the Ensemble.
         # We trust the filter 100% and just rerank the semantic results.
@@ -151,7 +149,7 @@ def build_dynamic_retriever(query: str, vectorstore, docstore, all_text_docs):
         )
 
     else:
-        print("\n   🔀 ROUTER: No ID detected.")
+        print(f"\n   🔀 ROUTER: {decision.reason}")
         print("   🧠 Strategy: HYBRID SEARCH (Semantic + BM25)")
 
         # Create BM25 only if needed (saves compute if strictly ID based, though negligible here)
@@ -200,37 +198,43 @@ def main() -> None:
         question = " ".join(sys.argv[1:])
         print(f"\n❓ Query: {question}")
 
-        # 2. Build the specific retriever for this query
+        # 2. A named-but-unindexed trial is answerable without retrieving anything.
+        decision = decide_route(question, get_known_ids(vectorstore))
+        if decision.route == UNKNOWN_ID:
+            print(f"\n   🔀 ROUTER: {decision.reason}")
+            print("\n" + "=" * 60)
+            print("✅ FINAL ANSWER:")
+            print("=" * 60)
+            print(
+                f"{decision.rejected_candidate} is not present in this index. "
+                "No answer is possible from the indexed protocols."
+            )
+            print("=" * 60 + "\n")
+            return
+
+        # 3. Build the specific retriever for this query and retrieve.
         retriever = build_dynamic_retriever(
             question, vectorstore, docstore, all_text_docs
         )
+        docs = retriever.invoke(question)
 
-        print("🔗 Building RAG chain...")
-        template = """
-        You are a Senior Clinical Research Associate (CRA) assisting with protocol verification.
-        Your task is to answer the user's question based *strictly* on the provided context.
+        # 4. Refuse rather than prompting the model with an empty context: with no
+        #    evidence the model answers from priors and still emits a citation.
+        if not docs:
+            print("\n   ⚠️  Retrieved 0 documents.")
+            print("\n" + "=" * 60)
+            print("✅ FINAL ANSWER:")
+            print("=" * 60)
+            print(NO_CONTEXT_MESSAGE)
+            print("=" * 60 + "\n")
+            return
 
-        GUIDELINES:
-        1. **Evidence-Based:** Answer only using the provided chunks. Do not use outside knowledge.
-        2. **Hierarchy of Data:** If you see multiple versions of a protocol (e.g., v1.0 vs v2.0 or Amendment), prioritize the latest version.
-        3. **Safety First:** If the user asks about Dosing, Exclusion Criteria, or Safety Signals, quote the text directly or be extremely precise.
-        4. **Formatting:** Use bullet points for lists. Use **bold** for key metrics.
-        5. **Uncertainty:** If the documents do not contain the exact answer, state that clearly.
-
-        CONTEXT:
-        {context}
-
-        QUESTION:
-        {question}
-
-        ANSWER (Structured for a Clinical Audience):
-        """
-
-        prompt = ChatPromptTemplate.from_template(template)
+        print(f"🔗 Building RAG chain over {len(docs)} chunks...")
+        prompt = ChatPromptTemplate.from_template(ANSWER_PROMPT)
 
         rag_chain = (
             {
-                "context": retriever | format_docs_for_prompt,
+                "context": lambda _: format_docs_for_prompt(docs),
                 "question": RunnablePassthrough(),
             }
             | prompt
