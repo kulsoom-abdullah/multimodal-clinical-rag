@@ -70,9 +70,31 @@ MAX_CONTEXT_CHARS = 15000
 class ClinicalTrialMetadata(BaseModel):
     """Schema for extracting structured metadata from clinical trial documents."""
 
-    trial_id: Optional[str] = Field(None, description="The NCT ID (e.g., NCT01234567).")
+    trial_id: Optional[str] = Field(
+        None,
+        description=(
+            "The NCT registration ID of THIS document (e.g., NCT01234567). "
+            "For a platform/master protocol, a sub-study document may carry its own "
+            "registration that differs from the master record cited on the title page. "
+            "Report the ID this document is registered under, not the one it references."
+        ),
+    )
     protocol_id: Optional[str] = Field(
-        None, description="The Sponsor Protocol Number (e.g., 3000-02-005)."
+        None, description="The Sponsor Protocol Number as printed (e.g., 3000-02-005)."
+    )
+    protocol_number: Optional[str] = Field(
+        None,
+        description=(
+            "The sponsor protocol number WITHOUT any amendment suffix (e.g., '205801' "
+            "for '205801/Amendment 08'). This is the stable identity of the study."
+        ),
+    )
+    amendment: Optional[str] = Field(
+        None,
+        description=(
+            "The amendment identifier alone, if the document is an amendment "
+            "(e.g., 'Amendment 08'). Null for an original protocol."
+        ),
     )
     trial_phase: Optional[str] = Field(
         None, description="Phase of the trial (e.g., Phase 1, Phase 3)."
@@ -147,6 +169,17 @@ def run_regex_fallbacks(text: str, current_metadata: Dict) -> Dict:
         if match:
             current_metadata["protocol_id"] = match.group(0)
 
+    # Derive the split identity from protocol_id when the extractor did not supply it.
+    pid = current_metadata.get("protocol_id")
+    if pid:
+        amend = re.search(r"(Amendment\s*\d+)", pid, re.IGNORECASE)
+        if not current_metadata.get("amendment") and amend:
+            current_metadata["amendment"] = amend.group(1)
+        if not current_metadata.get("protocol_number"):
+            current_metadata["protocol_number"] = re.split(
+                r"\s*[/,]\s*Amendment", pid, flags=re.IGNORECASE
+            )[0].strip()
+
     return current_metadata
 
 
@@ -178,7 +211,10 @@ def agent_extract_metadata(extractor_llm, text_context: str, filename: str) -> D
         [
             (
                 "system",
-                "You are an expert Clinical Research Coordinator. Extract metadata from this trial document.",
+                "You are an expert Clinical Research Coordinator. Extract metadata from this trial document. "
+                "Identity matters: a master protocol and its sub-studies are separately registered, so the "
+                "NCT ID this document belongs to may differ from one it merely cites. Split the protocol "
+                "number from its amendment.",
             ),
             ("user", "Filename: {filename}\n\nDocument Text:\n{text}"),
         ]
@@ -334,13 +370,18 @@ def main():
 
             meta = run_regex_fallbacks(full_text[:10000], meta)
             meta = {k: v for k, v in meta.items() if v is not None}
+            # The folder name is where the PDF was filed, not an authority on identity:
+            # a master protocol's sub-studies are separately registered, so the folder and
+            # the document's own NCT ID legitimately differ. Keep what was extracted.
             meta.update(
                 {
                     "source": str(md_path),
-                    "trial_id": trial_dir.name,
+                    "source_dir": trial_dir.name,
                     "pdf_stem": pdf_stem,
                 }
             )
+            if not meta.get("trial_id"):
+                meta["trial_id"] = trial_dir.name
 
             print(
                 f"       → {meta.get('trial_phase', '?')} | {meta.get('intervention_drug', '?')} | {meta.get('protocol_id', '?')}"

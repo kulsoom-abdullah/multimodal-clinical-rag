@@ -102,17 +102,20 @@ with st.sidebar:
     st.header("🗂️ Context Selector")
 
     # --- FEATURE 1: The Study Selector (Synced with DB) ---
+    # Labels are derived from each document's extracted intervention_drug / indication
+    # and confirmed by grep against the source text — not written alongside the IDs.
+    # The two 205801 rows are one master protocol under two registrations; they are kept
+    # adjacent so the shared identity is visible without reading the metadata.
     TRIAL_MAP = {
         "🌎 All Trials (Global Search)": None,
-        # Validated IDs from your Database
-        "NCT02423343 (Galunisertib + Nivo)": "NCT02423343",
-        "NCT02578680 (KEYNOTE-189 / NSCLC)": "NCT02578680",
-        "NCT05751629 (MORAb-202 / Ovarian)": "NCT05751629",
-        "NCT05600322 (Hexvix Blue Light)": "NCT05600322",
-        # The 3 previously missing trials:
-        "NCT05553808 (Liso-cel / CLL)": "NCT05553808",
-        "NCT05613088 (Talazoparib / PARP)": "NCT05613088",
-        "NCT06926673 (Check Name in PDF)": "NCT06926673",
+        "NCT02423343 — Galunisertib + Nivolumab (Ph 1b/2, solid tumors)": "NCT02423343",
+        "NCT02578680 — KEYNOTE-189: Pembrolizumab + chemo (Ph 3, NSCLC)": "NCT02578680",
+        "NCT05600322 — Hexvix blue-light cystoscopy (bladder)": "NCT05600322",
+        "NCT05613088 — CA116001: Farletuzumab ecteribulin / MORAb-202 (Ph 2, ovarian)": "NCT05613088",
+        "NCT05751629 — 3000-02-005: Dostarlimab + bevacizumab + niraparib (Ph 2, ovarian)": "NCT05751629",
+        # --- Protocol 205801 (GSK NSCLC master protocol), two registrations ---
+        "NCT05553808 — 205801 Amd 08: NSCLC master protocol (Ph 2)": "NCT05553808",
+        "NCT06926673 — 205801 Sub-study 3 SAP (Ph 2, NSCLC)": "NCT06926673",
     }
     selected_trial_name = st.selectbox(
         "Select Clinical Trial",
