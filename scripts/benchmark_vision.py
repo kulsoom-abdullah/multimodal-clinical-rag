@@ -22,10 +22,13 @@ TEST_IMAGE_PATH = "images/benchmark_heatmap.jpeg"
 #
 # validate_pricing() flags entries where output costs less than input, which no
 # current provider charges and which silently understates a model's cost.
+#
+# OpenAI rates verified against openai.com pricing on 2026-08-04.
+# Anthropic rates not re-verified on that date.
 PRICING = {
-    # NOTE: output < input here. Almost certainly wrong; left as-is rather than
-    # guessed at, and reported at startup so it cannot pass unnoticed.
-    "gpt-5.1": (1.25, 0.10),
+    # 2026-08-04: corrected from (1.25, 0.10). The old output rate was the
+    # cached-input price with a dropped decimal, understating output 100x.
+    "gpt-5.1": (1.25, 10.00),
     "gpt-5-mini": (0.25, 2.00),
     "gpt-4.1-mini": (0.80, 3.20),
     "gpt-4o-mini": (0.15, 0.60),

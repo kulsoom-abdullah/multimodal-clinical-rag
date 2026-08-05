@@ -1,0 +1,134 @@
+{
+  "image": "images/benchmark_heatmap.jpeg",
+  "note": "Costs are published list prices applied to the tokens each call actually used. Quality is measured only as output length; there is no accuracy rubric. One image.",
+  "pricing_usd_per_1m": {
+    "gpt-5.1": [
+      1.25,
+      10.0
+    ],
+    "gpt-5-mini": [
+      0.25,
+      2.0
+    ],
+    "gpt-4.1-mini": [
+      0.8,
+      3.2
+    ],
+    "gpt-4o-mini": [
+      0.15,
+      0.6
+    ],
+    "claude-3-7-sonnet": [
+      3.0,
+      15.0
+    ],
+    "claude-4-0-sonnet": [
+      3.0,
+      15.0
+    ],
+    "claude-4-5-sonnet": [
+      3.0,
+      15.0
+    ],
+    "claude-haiku-4-5": [
+      1.0,
+      5.0
+    ],
+    "claude-haiku-3-5": [
+      0.8,
+      4.0
+    ]
+  },
+  "results": [
+    {
+      "model": "gpt-5.1",
+      "latency_s": 9.19,
+      "input_tokens": 681,
+      "output_tokens": 1000,
+      "cost_usd": 0.01085125,
+      "output_chars": 3020,
+      "status": "ok",
+      "note": ""
+    },
+    {
+      "model": "gpt-5-mini",
+      "latency_s": 8.19,
+      "input_tokens": 1095,
+      "output_tokens": 1000,
+      "cost_usd": 0.00027375,
+      "output_chars": 0,
+      "status": "empty_response",
+      "note": "empty response, input only"
+    },
+    {
+      "model": "gpt-4.1-mini",
+      "latency_s": 6.62,
+      "input_tokens": 1462,
+      "output_tokens": 461,
+      "cost_usd": 0.0026448,
+      "output_chars": 1999,
+      "status": "ok",
+      "note": ""
+    },
+    {
+      "model": "gpt-4o-mini",
+      "latency_s": 5.58,
+      "input_tokens": 25553,
+      "output_tokens": 461,
+      "cost_usd": 0.00410955,
+      "output_chars": 2172,
+      "status": "ok",
+      "note": ""
+    },
+    {
+      "model": "claude-haiku-4-5",
+      "latency_s": 7.5,
+      "input_tokens": 1181,
+      "output_tokens": 611,
+      "cost_usd": 0.004236,
+      "output_chars": 1962,
+      "status": "ok",
+      "note": ""
+    },
+    {
+      "model": "claude-haiku-3-5",
+      "latency_s": null,
+      "input_tokens": null,
+      "output_tokens": null,
+      "cost_usd": null,
+      "output_chars": 0,
+      "status": "error",
+      "note": "Error code: 404 - {'type': 'error', 'error': {'type': 'not_found_error', 'message': 'model: claude-3-5-haiku-20241022'}, 'request_id': 'req_011CdisUPGroCMZRR4WYKrAx'}"
+    },
+    {
+      "model": "claude-3-7-sonnet",
+      "latency_s": null,
+      "input_tokens": null,
+      "output_tokens": null,
+      "cost_usd": null,
+      "output_chars": 0,
+      "status": "error",
+      "note": "Error code: 404 - {'type': 'error', 'error': {'type': 'not_found_error', 'message': 'model: claude-3-7-sonnet-20250219'}, 'request_id': 'req_011CdisUPt5CVioECjSomqpJ'}"
+    },
+    {
+      "model": "claude-4-0-sonnet",
+      "latency_s": null,
+      "input_tokens": null,
+      "output_tokens": null,
+      "cost_usd": null,
+      "output_chars": 0,
+      "status": "error",
+      "note": "Error code: 404 - {'type': 'error', 'error': {'type': 'not_found_error', 'message': 'model: claude-sonnet-4-20250514'}, 'request_id': 'req_011CdisUQfhUssmgDLRzER4q'}"
+    },
+    {
+      "model": "claude-4-5-sonnet",
+      "latency_s": 16.55,
+      "input_tokens": 1181,
+      "output_tokens": 602,
+      "cost_usd": 0.012573,
+      "output_chars": 1995,
+      "status": "ok",
+      "note": ""
+    }
+  ]
+}
