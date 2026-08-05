@@ -339,17 +339,29 @@ def agent_summarize(summarizer_llm, content: str, kind: str, meta: Dict) -> str:
 
         base64_image = encode_image(image_path)
 
+        # The classification is a routing decision, not part of the caption. An
+        # earlier numbered-instruction phrasing made the model emit
+        # "1. CLASSIFY: IGNORE_IMAGE" as the caption's first line and then describe
+        # the figure anyway -- contaminating the exact text the vector index uses to
+        # choose which figure to retrieve. Now it is either the bare token or a
+        # description, never both.
         prompt_text = f"""
         CONTEXT:
         Trial: {trial_id} (Protocol: {protocol_id})
         Phase: {phase}
         Drug: {drug}
 
-        INSTRUCTIONS:
-        Analyze this clinical figure.
-        1. CLASSIFY: If it's a logo/noise, output "IGNORE_IMAGE".
-        2. DESCRIBE: Capture chart type, axis labels, data trends, and key numbers.
-        3. REDACTIONS: If present, acknowledge them but describe visible context.
+        You are describing a figure from a clinical trial document.
+
+        If this image is a logo, header, decorative rule, or otherwise carries no
+        clinical information, reply with exactly this and nothing else:
+        IGNORE_IMAGE
+
+        Otherwise, describe the figure and do NOT use the word IGNORE_IMAGE
+        anywhere in your reply. Capture chart type, axis labels, data trends and
+        key numbers. If parts are redacted, say so and describe what remains
+        visible. Begin directly with the description -- no preamble, no headings
+        restating these instructions.
         """
 
         msg = HumanMessage(
@@ -364,7 +376,16 @@ def agent_summarize(summarizer_llm, content: str, kind: str, meta: Dict) -> str:
         # description. Letting it raise lets backoff retry, and a genuine failure
         # stops the run instead of quietly poisoning the image index.
         response = summarizer_llm.invoke([msg])
-        return response.content
+        caption = (response.content or "").strip()
+
+        # Post-check: IGNORE_IMAGE is a decision token, so it is either the whole
+        # reply or absent. Anything else means the model narrated the instruction
+        # into the caption, and that text would be embedded and searched.
+        if "IGNORE_IMAGE" in caption and caption != "IGNORE_IMAGE":
+            raise ValueError(
+                f"Caption contaminated with IGNORE_IMAGE: {caption[:120]!r}"
+            )
+        return caption
 
     # --- CASE: TEXT/TABLE ---
     else:
