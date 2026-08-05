@@ -1,0 +1,113 @@
+{
+  "n": 4,
+  "top_k": 3,
+  "recall": {
+    "trial_id": 1.0,
+    "protocol_number": 1.0
+  },
+  "random_floor_trial_id": 0.27827087346363494,
+  "index_chunks": 5902,
+  "results": [
+    {
+      "query": "What is the primary objective of study 3000-02-005?",
+      "type": "protocol_lookup",
+      "latency_s": 0.947,
+      "trial_id": {
+        "hit": true,
+        "gold": [
+          "NCT05751629"
+        ],
+        "top3": [
+          "NCT05751629"
+        ]
+      },
+      "protocol_number": {
+        "hit": true,
+        "gold": [
+          "3000-02-005"
+        ],
+        "top3": [
+          "3000-02-005"
+        ]
+      },
+      "n_retrieved": 5
+    },
+    {
+      "query": "What are the common side effects of PARP inhibitors?",
+      "type": "semantic",
+      "latency_s": 0.549,
+      "trial_id": {
+        "hit": true,
+        "gold": [
+          "NCT05751629"
+        ],
+        "top3": [
+          "NCT05751629"
+        ]
+      },
+      "protocol_number": {
+        "hit": true,
+        "gold": [
+          "3000-02-005"
+        ],
+        "top3": [
+          "3000-02-005"
+        ]
+      },
+      "n_retrieved": 5
+    },
+    {
+      "query": "What is the dosing schedule for Galunisertib?",
+      "type": "semantic",
+      "latency_s": 0.61,
+      "trial_id": {
+        "hit": true,
+        "gold": [
+          "NCT02423343"
+        ],
+        "top3": [
+          "NCT02423343"
+        ]
+      },
+      "protocol_number": {
+        "hit": true,
+        "gold": [
+          "<UNKNOWN>",
+          "H9H-MC-JBEF"
+        ],
+        "top3": [
+          "<UNKNOWN>",
+          "H9H-MC-JBEF"
+        ]
+      },
+      "n_retrieved": 5
+    },
+    {
+      "query": "Show me Phase 3 trials for NSCLC",
+      "type": "filter_phase",
+      "latency_s": 0.457,
+      "trial_id": {
+        "hit": true,
+        "gold": [
+          "NCT02578680"
+        ],
+        "top3": [
+          "NCT02578680",
+          "NCT06926673"
+        ]
+      },
+      "protocol_number": {
+        "hit": true,
+        "gold": [
+          "189",
+          "KEYNOTE-189"
+        ],
+        "top3": [
+          "189",
+          "205801"
+        ]
+      },
+      "n_retrieved": 5
+    }
+  ]
+}
