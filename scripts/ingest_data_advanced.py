@@ -11,12 +11,26 @@ Architecture:
 
 Usage:
     python scripts/ingest_data_advanced.py
+
+!! NEVER RESUME A PARTIAL RUN. Always delete data/chroma_db_advanced and
+   data/docstore_advanced.pkl and start over.
+
+   The per-document checkpoint asks "is there already a chunk with this
+   pdf_stem and source_dir?" and skips if so. A document's text chunks are
+   written before its images are captioned, so a run interrupted between those
+   two steps leaves a document the checkpoint considers complete. Resuming
+   skips it and its figures are silently missing from the index -- no error,
+   no warning, and nothing downstream can tell.
+
+   Making the write transactional would fix this properly; until then,
+   clear and rebuild.
 """
 import os
 import sys
 import re
 import hashlib
 import pickle
+from concurrent.futures import ThreadPoolExecutor
 import backoff
 import base64
 from pathlib import Path
@@ -59,6 +73,10 @@ SUMMARY_MODEL_NAME = "gpt-4o-mini"
 
 # Embeddings: Switched to PubMedBERT based on Deep Research
 EMBEDDING_MODEL = "NeuML/pubmedbert-base-embeddings"
+
+# Concurrent summarization calls. Deliberately conservative: past this, rate-limit
+# retries cost more than the added concurrency buys.
+SUMMARY_WORKERS = 8
 
 # Paths
 CHROMA_DIR = Path("data/chroma_db_advanced")
@@ -203,6 +221,18 @@ def load_images(images_dir: Path) -> List[Dict[str, Any]]:
     return images
 
 
+def save_docstore(docstore) -> None:
+    """Write the docstore atomically.
+
+    Written after every document rather than once at the end, and via a temp file
+    + rename so an interrupted write cannot truncate a good docstore.
+    """
+    tmp = DOCSTORE_PATH.with_suffix(".pkl.tmp")
+    with open(tmp, "wb") as f:
+        pickle.dump(dict(docstore.store), f)
+    tmp.replace(DOCSTORE_PATH)
+
+
 def make_doc_id(*parts: Any) -> str:
     """Deterministic parent id.
 
@@ -257,38 +287,39 @@ def agent_summarize(summarizer_llm, content: str, kind: str, meta: Dict) -> str:
     
     # --- CASE: IMAGE (VISION) ---
     if kind == "image":
-        try:
-            # In image mode, 'content' is the file path
-            image_path = Path(content)
-            if image_path.exists():
-                base64_image = encode_image(image_path)
-                
-                prompt_text = f"""
-                CONTEXT:
-                Trial: {trial_id} (Protocol: {protocol_id})
-                Phase: {phase}
-                Drug: {drug}
-                
-                INSTRUCTIONS:
-                Analyze this clinical figure.
-                1. CLASSIFY: If it's a logo/noise, output "IGNORE_IMAGE".
-                2. DESCRIBE: Capture chart type, axis labels, data trends, and key numbers.
-                3. REDACTIONS: If present, acknowledge them but describe visible context.
-                """
-                
-                msg = HumanMessage(
-                    content=[
-                        {"type": "text", "text": prompt_text},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}},
-                    ]
-                )
-                # Call the model directly
-                response = summarizer_llm.invoke([msg])
-                return response.content
-            else:
-                return f"Image file not found: {image_path.name}"
-        except Exception as e:
-            return f"Error analyzing image: {str(e)}"
+        # In image mode, 'content' is the file path
+        image_path = Path(content)
+        if not image_path.exists():
+            raise FileNotFoundError(f"Image not found: {image_path}")
+
+        base64_image = encode_image(image_path)
+
+        prompt_text = f"""
+        CONTEXT:
+        Trial: {trial_id} (Protocol: {protocol_id})
+        Phase: {phase}
+        Drug: {drug}
+
+        INSTRUCTIONS:
+        Analyze this clinical figure.
+        1. CLASSIFY: If it's a logo/noise, output "IGNORE_IMAGE".
+        2. DESCRIBE: Capture chart type, axis labels, data trends, and key numbers.
+        3. REDACTIONS: If present, acknowledge them but describe visible context.
+        """
+
+        msg = HumanMessage(
+            content=[
+                {"type": "text", "text": prompt_text},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}},
+            ]
+        )
+        # Deliberately NOT wrapped in try/except: this function is @backoff-
+        # decorated, and swallowing the exception here returned the error text as
+        # the caption, which was then embedded and indexed as if it were a figure
+        # description. Letting it raise lets backoff retry, and a genuine failure
+        # stops the run instead of quietly poisoning the image index.
+        response = summarizer_llm.invoke([msg])
+        return response.content
 
     # --- CASE: TEXT/TABLE ---
     else:
@@ -317,8 +348,21 @@ def main():
         print("❌ ANTHROPIC_API_KEY missing!")
         sys.exit(1)
 
-    extractor_llm = ChatAnthropic(model=EXTRACTION_MODEL_NAME, temperature=0)
-    summarizer_llm = ChatOpenAI(model=SUMMARY_MODEL_NAME, temperature=0)
+    # Timeouts are required, not optional: @backoff only fires on exceptions, so a
+    # socket that stalls without erroring never triggers a retry and the run hangs
+    # indefinitely. Observed once at a document boundary, blocked in SSL read.
+    extractor_llm = ChatAnthropic(
+        model=EXTRACTION_MODEL_NAME, temperature=0, timeout=60, max_retries=3
+    )
+    summarizer_llm = ChatOpenAI(
+        model=SUMMARY_MODEL_NAME, temperature=0, timeout=60, max_retries=3
+    )
+    # Vision calls run 8-20s on the benchmarked figures, but redacted pages are
+    # larger and slower; given its own client so the text path is not slowed to
+    # accommodate it.
+    vision_llm = ChatOpenAI(
+        model=SUMMARY_MODEL_NAME, temperature=0, timeout=120, max_retries=3
+    )
 
     print(f"📦 Loading Embeddings: {EMBEDDING_MODEL}...")
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
@@ -359,9 +403,13 @@ def main():
 
             print(f"  📄 {pdf_stem}")
 
-            # Checkpoint: Check for this SPECIFIC file in this SPECIFIC trial
+            # Checkpoint: has this exact source file already been ingested?
+            # Matched on source_dir, not trial_id: trial_id is now the value
+            # extracted from the document, which legitimately differs from the
+            # directory name for a separately-registered sub-study. Matching on
+            # trial_id would miss those on a resumed run and ingest them twice.
             existing_docs = vectorstore.get(
-                where={"$and": [{"pdf_stem": pdf_stem}, {"trial_id": trial_id}]},
+                where={"$and": [{"pdf_stem": pdf_stem}, {"source_dir": trial_id}]},
                 limit=1,
             )
 
@@ -410,13 +458,31 @@ def main():
                 chunk.metadata["chunk_index"] = i
                 chunk.metadata["chunk_type"] = "text"
 
-                summary = agent_summarize(
+            # Summarize concurrently. These calls are pure network I/O and a single
+            # stalled request would otherwise block every chunk behind it -- observed
+            # throughput swinging 20x when run sequentially. ThreadPoolExecutor.map
+            # yields results in INPUT order regardless of completion order, and doc_id
+            # is derived from the enumerate index below, never from completion order,
+            # so the build stays deterministic.
+            done = 0
+
+            def _summarize(chunk):
+                nonlocal done
+                out = agent_summarize(
                     summarizer_llm, chunk.page_content, "text", meta
                 )
+                done += 1
+                if done % 25 == 0:
+                    print(f"       ...{done}/{len(chunks)}", flush=True)
+                return out
+
+            with ThreadPoolExecutor(max_workers=SUMMARY_WORKERS) as pool:
+                summaries = list(pool.map(_summarize, chunks))
+
+            for i, (chunk, summary) in enumerate(zip(chunks, summaries)):
                 doc_id = make_doc_id(
                     meta.get("source_dir"), pdf_stem, "text", i
                 )
-
                 batch_sum.append(
                     Document(
                         page_content=summary,
@@ -424,9 +490,6 @@ def main():
                     )
                 )
                 batch_org.append((doc_id, chunk))
-
-                if (i + 1) % 10 == 0:
-                    print(f"       ...{i+1}")
 
             if batch_sum:
                 # ids= keyed on doc_id so a vector can be located and replaced later;
@@ -449,7 +512,7 @@ def main():
                         {"chunk_type": "image", "filename": img["filename"]}
                     )
                     summary = agent_summarize(
-                        summarizer_llm, str(img["path"]), "image", img_meta
+                        vision_llm, str(img["path"]), "image", img_meta
                     )
                     doc_id = make_doc_id(
                         meta.get("source_dir"), pdf_stem, "image", img["filename"]
@@ -482,9 +545,14 @@ def main():
                     retriever.docstore.mset(img_batch_orgs)
                     print(f"    💾 Saved {len(img_batch_sums)} images.")
 
-    print(f"\n💾 Saving docstore to {DOCSTORE_PATH}")
-    with open(DOCSTORE_PATH, "wb") as f:
-        pickle.dump(dict(retriever.docstore.store), f)
+            # Persist the docstore after every document. It used to be written once
+            # at the very end, so a crash mid-run left an index full of vectors with
+            # no parent documents to resolve to -- every query returning nothing.
+            # Observed: a run that died on the last document left 5,733 vectors and
+            # no docstore at all.
+            save_docstore(retriever.docstore)
+
+    save_docstore(retriever.docstore)
     print("✅ Done.")
 
 
