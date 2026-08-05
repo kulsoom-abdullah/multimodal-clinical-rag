@@ -52,19 +52,31 @@ def _norm(value: str) -> str:
     return value.strip().casefold()
 
 
-def collect_known_ids(metadatas: Iterable[Dict[str, Any]]) -> Dict[str, Set[str]]:
-    """Build the identifier whitelist from index metadata."""
+def collect_known_ids(metadatas: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    """Build the identifier whitelist from index metadata.
+
+    Protocol identifiers are stored as {value: field}, carrying the field each
+    value came from so a match is filtered on the field that actually holds it.
+    A value present only in `protocol_number` cannot be filtered as `protocol_id`,
+    and doing so routes a recognised identifier into a filter matching nothing.
+
+    Where a value appears under both, `protocol_number` wins: it spans the whole
+    protocol, while `protocol_id` names one printed variant of it.
+    """
     trials: Set[str] = set()
-    protocols: Set[str] = set()
+    protocols: Dict[str, str] = {}
     for meta in metadatas:
         trial = meta.get("trial_id")
         if trial:
             trials.add(str(trial))
-        for key in ("protocol_id", "protocol_number"):
-            value = meta.get(key)
-            if value and str(value) != "<UNKNOWN>":
-                protocols.add(str(value))
-    return {"trial_id": trials, "protocol_id": protocols}
+        for field in ("protocol_id", "protocol_number"):
+            value = meta.get(field)
+            if not value or str(value) == "<UNKNOWN>":
+                continue
+            value = str(value)
+            if field == "protocol_number" or value not in protocols:
+                protocols[value] = field
+    return {"trial_id": trials, "protocol": protocols}
 
 
 def load_known_ids(vectorstore, batch_size: int = 2000) -> Dict[str, Set[str]]:
@@ -86,8 +98,8 @@ def _match_known(candidate: str, known: Set[str]) -> Optional[str]:
     return lookup.get(_norm(candidate))
 
 
-def _find_indexed_protocol(query: str, known_protocols: Set[str]) -> Optional[str]:
-    """Find an indexed protocol number mentioned in the query.
+def _find_indexed_protocol(query: str, known_protocols: Dict[str, str]) -> Optional[str]:
+    """Find an indexed protocol identifier mentioned in the query.
 
     Longest first, so '205801/Amendment 08' wins over the bare '205801' it contains.
     Boundaries are checked explicitly because protocol numbers contain '-' and '/',
@@ -106,7 +118,7 @@ def _find_indexed_protocol(query: str, known_protocols: Set[str]) -> Optional[st
 def decide_route(query: str, known_ids: Optional[Dict[str, Set[str]]] = None) -> RouteDecision:
     known_ids = known_ids or {}
     known_trials = known_ids.get("trial_id", set())
-    known_protocols = known_ids.get("protocol_id", set())
+    known_protocols = known_ids.get("protocol", {})
 
     nct_match = NCT_PATTERN.search(query)
     if nct_match:
@@ -126,8 +138,10 @@ def decide_route(query: str, known_ids: Optional[Dict[str, Set[str]]] = None) ->
 
     protocol = _find_indexed_protocol(query, known_protocols)
     if protocol:
+        # Filter on the field this value was found in, not a fixed field name.
+        field = known_protocols[protocol]
         return RouteDecision(
-            STRICT, "protocol_id", protocol, f"protocol_id {protocol} -> strict filter"
+            STRICT, field, protocol, f"{field} {protocol} -> strict filter"
         )
 
     return RouteDecision(HYBRID, reason="no indexed identifier -> hybrid search")
