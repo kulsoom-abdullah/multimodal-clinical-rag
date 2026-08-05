@@ -78,6 +78,51 @@ EMBEDDING_MODEL = "NeuML/pubmedbert-base-embeddings"
 # retries cost more than the added concurrency buys.
 SUMMARY_WORKERS = 8
 
+# Values the extractor returns to mean "I could not determine this". They are
+# strings, not None, so a truthy check treats them as real answers -- which put
+# 59% of an earlier build under a non-identity. Enumerated explicitly rather than
+# pattern-matched, and compared case-insensitively.
+PLACEHOLDER_VALUES = {
+    "<unknown>",
+    "unknown",
+    "to be determined",
+    "tbd",
+    "n/a",
+    "na",
+    "none",
+    "null",
+    "not specified",
+    "not available",
+    "",
+}
+
+
+def is_placeholder(value) -> bool:
+    """True if `value` carries no information, whether it is None or a stand-in."""
+    if value is None:
+        return True
+    return str(value).strip().casefold() in PLACEHOLDER_VALUES
+
+
+# A registration ID is 'NCT' plus exactly 8 digits. Anything else is not one.
+NCT_SHAPE = re.compile(r"^NCT\d{8}$", re.IGNORECASE)
+
+
+def resolve_trial_id(extracted, source_dir):
+    """Pick a trial_id and say where it came from.
+
+    Placeholder checks catch "I don't know". Shape validation catches the other
+    failure: a confident but wrong answer. An earlier build extracted '213357'
+    for a document -- a plausible-looking internal study number that is not a
+    registration ID, passed the placeholder check, and split one trial across two
+    identities. Validating the shape rejects that whole class.
+    """
+    if is_placeholder(extracted):
+        return source_dir, "source_dir:placeholder"
+    if not NCT_SHAPE.match(str(extracted).strip()):
+        return source_dir, "source_dir:invalid_shape"
+    return str(extracted).strip().upper(), "extracted"
+
 # Paths
 CHROMA_DIR = Path("data/chroma_db_advanced")
 DOCSTORE_PATH = Path("data/docstore_advanced.pkl")
@@ -433,7 +478,10 @@ def main():
             meta = {k: v for k, v in meta.items() if v is not None}
             # The folder name is where the PDF was filed, not an authority on identity:
             # a master protocol's sub-studies are separately registered, so the folder and
-            # the document's own NCT ID legitimately differ. Keep what was extracted.
+            # the document's own NCT ID legitimately differ. Prefer what was extracted;
+            # fall back to the folder only when extraction produced nothing usable.
+            # The original defect was applying the folder name UNCONDITIONALLY, which
+            # overwrote good extractions. As a fallback it is correct.
             meta.update(
                 {
                     "source": str(md_path),
@@ -441,8 +489,12 @@ def main():
                     "pdf_stem": pdf_stem,
                 }
             )
-            if not meta.get("trial_id"):
-                meta["trial_id"] = trial_dir.name
+            resolved, origin = resolve_trial_id(meta.get("trial_id"), trial_dir.name)
+            if origin != "extracted":
+                print(f"       ⚠️  rejected extracted trial_id={meta.get('trial_id')!r}")
+            meta["trial_id"] = resolved
+            meta["trial_id_source"] = origin
+            print(f"       → trial_id={meta['trial_id']} ({meta['trial_id_source']})")
 
             print(
                 f"       → {meta.get('trial_phase', '?')} | {meta.get('intervention_drug', '?')} | {meta.get('protocol_id', '?')}"
