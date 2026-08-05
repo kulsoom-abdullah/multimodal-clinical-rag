@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from scripts.query_rag import load_resources, build_dynamic_retriever  # noqa: E402
+from scripts.query_rag import load_resources, build_dynamic_retriever, get_known_ids  # noqa: E402
 
 # Pre-registered gold. See data/eval_runs/GOLD_PREREGISTRATION.md.
 GOLD = {
@@ -73,6 +73,25 @@ def random_floor(metadatas, gold_trials, k=TOP_K):
     return sum(floors) / len(floors) if floors else 0.0
 
 
+def check_whitelist_resolves(vectorstore, known_ids):
+    """Every whitelisted identifier must match at least one chunk as a strict filter.
+
+    A value can be recognised by the router and still filter to nothing if it is
+    looked up in the wrong metadata field. That routes a real identifier to an
+    empty result, which the zero-hit guard reports as "no documents matched" —
+    indistinguishable, to the user, from the document not existing.
+    """
+    collection = vectorstore._collection
+    checks = [("trial_id", v, "trial_id") for v in known_ids.get("trial_id", set())]
+    checks += [(field, v, "protocol") for v, field in known_ids.get("protocol", {}).items()]
+
+    dead = []
+    for field, value, _group in checks:
+        if not collection.get(where={field: value}, include=[], limit=1)["ids"]:
+            dead.append(f"{field}={value!r}")
+    return len(checks), dead
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", type=Path, help="write a run artifact here")
@@ -108,6 +127,14 @@ def main():
             include=["metadatas"], limit=2000, offset=offset
         )["metadatas"]
         offset += 2000
+
+    n_ids, dead_ids = check_whitelist_resolves(vectorstore, get_known_ids(vectorstore))
+    if dead_ids:
+        print(f"❌ {len(dead_ids)} of {n_ids} whitelisted identifiers filter to zero chunks:")
+        for d in dead_ids:
+            print(f"     {d}")
+        return 1
+    print(f"✅ all {n_ids} whitelisted identifiers resolve to at least one chunk")
 
     hits = {k: 0 for k in KEYS}
     rows = []
